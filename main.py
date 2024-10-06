@@ -15,12 +15,12 @@ MODE = 'test'  # 'training' or 'test'
 
 MOD_PARAMS = {'mars': {'filter_range': [0.3, 1.5],
                        'median_len': 7,
-                       'ch_cutoff': 1e-3,
+                       'ch_cutoff': 1.9e-2,
                        'ch_trigger': 0.5},
-              'lunar': {'filter_range': [0.5, 0.9],
+              'lunar': {'filter_range': [0.5, 0.901],
                         'median_len': 21,
                         'ch_cutoff': 1.4e-3,
-                        'ch_trigger': 0.46}
+                        'ch_trigger': 0.42}
               }
 
 OUTPUT_FILES_ROOT = './output_files/'
@@ -66,8 +66,8 @@ class Model:
         self.sxx = None
         self.sxxt = None
         self.sxxf = None
-        self.sc = None
-        self.scm = None
+        self.rms = None
+        self.rmsm = None
         #  CHARACTERISTIC FUNCTION PARAMS
         # How long should the short-term and long-term window be, in seconds
         self.sta_len = 120
@@ -108,13 +108,13 @@ class Model:
         self.analyze_capture()
 
     def analyze_capture(self):
-        """Process the loaded data, by applying filters, calculating spectral content, etc"""
+        """Process the loaded data, by applying filters, calculating power, etc"""
         # DATA FILTERING
         self.data = bandpass_filter(self.data, *self.filter_range, self.fs)
         self.data = savgol_filter(self.data, window_length=2001, polyorder=2)
         self.data = self.normalize(self.data)
         self.sxxf, self.sxxt, self.sxx = signal.spectrogram(self.data, self.fs)
-        self.calculate_spectral_content()
+        self.calculate_rms()
         self.calculate_characteristic()
         self.scan_for_arrivals(self.ch_trigger)
 
@@ -163,7 +163,7 @@ class Model:
         self.plot_fft(ax2, self.times, self.data)
         # PLOT SPECTROGRAM
         self.plot_spectrogram(ax3)
-        self.plot_spectral_content(ax4)
+        self.plot_power_over_time(ax4)
         if self.cat_atime:
             self.plot_arrival(ax3, self.cat_atime)
             self.plot_arrival(ax4, self.cat_atime)
@@ -192,11 +192,17 @@ class Model:
             ax.grid()
         ax.legend()
 
-    def calculate_spectral_content(self):
-        """Calculates the spectral content from the spectrogram"""
-        self.sc = [sum([self.sxx[i][j] for i in range(len(self.sxx))]) for j in range(len(self.sxx[0]))]
+    @staticmethod
+    def _rms(f_components):
+        """Calculates the rms based on the frequency components"""
+        rms = np.sqrt(np.sum([f_i * f_i for f_i in f_components]))
+        return rms
+
+    def calculate_rms(self):
+        """Calculates the power of the signal from the spectrogram"""
+        self.rms = [self._rms([self.sxx[i][j] for i in range(len(self.sxx))]) for j in range(len(self.sxx[0]))]
         # APPLY MEDIAN FILTER
-        self.scm = signal.medfilt(self.sc, kernel_size=self.median_len)
+        self.rmsm = signal.medfilt(self.rms, kernel_size=self.median_len)
 
     def plot_spectrogram(self, ax):
         """Plots the spectrogram"""
@@ -209,18 +215,18 @@ class Model:
         cbar.set_label('Power ((m/s)^2/sqrt(Hz))', fontweight='bold')
         ax.set_title(f'Spectrogram', fontweight='bold')
 
-    def plot_spectral_content(self, ax):
-        """Plot the spectral content of the data"""
-        ax.plot(self.sxxt, self.sc, label='Raw', color='red')
+    def plot_power_over_time(self, ax):
+        """Plot the power of the signal over time"""
+        ax.plot(self.sxxt, self.rms, label='Raw', color='red')
         # ax.plot(self.sxxt, lowpass_filter(self.sc, 0.1, 2), label='Filtered, low pass filter')
         # Apply Savitzky-Golay filter
         # ax.plot(self.sxxt, savgol_filter(self.sc, window_length=11, polyorder=3), label='Filtered. Golay')
-        ax.plot(self.sxxt, self.scm, label='Filtered, median')
+        ax.plot(self.sxxt, self.rmsm, label='Filtered, median')
         ax.legend()
         ax.set_xlim([min(self.times), max(self.times)])
         ax.set_xlabel(f'Time [s]', fontweight='bold')
-        ax.set_ylabel('Spectral content', fontweight='bold')
-        ax.set_title(f'Spectral content', fontweight='bold')
+        ax.set_ylabel('Power', fontweight='bold')
+        # ax.set_title(f'Power', fontweight='bold')
         if PLOT_GRIDS:
             ax.grid()
 
@@ -238,10 +244,10 @@ class Model:
 
     def calculate_characteristic(self):
         """Get the characteristic function, which will be used to deduce sismic events programmatically"""
-        med = np.median(self.scm)
+        med = np.median(self.rmsm)
         epsilon = 1e-3  # to avoid division by 0
-        self.ch_samps = (self.scm + epsilon) / (med + epsilon)
-        self.ch_times = np.linspace(self.times[0], self.times[-1], len(self.scm))
+        self.ch_samps = (self.rmsm + epsilon) / (med + epsilon)
+        self.ch_times = np.linspace(self.times[0], self.times[-1], len(self.rmsm))
         self.ch_samps = (self.ch_samps + epsilon) / (med + epsilon)
         # self.ch_samps = self.sta_lta(self.ch_samps, int(self.sta_len * freq), int(self.lta_len * freq))
         # self.ch_samps = classic_sta_lta(self.ch_samps, int(self.sta_len * freq), int(self.lta_len * freq))
