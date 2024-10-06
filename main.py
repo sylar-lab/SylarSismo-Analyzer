@@ -11,14 +11,16 @@ from matplotlib.colors import LogNorm
 from scipy.signal import butter, filtfilt
 
 PLANET = 'lunar'  # 'moon' or 'mars'
-MODE = 'training'  # 'training' or 'test'
+MODE = 'test'  # 'training' or 'test'
 
 MOD_PARAMS = {'mars': {'filter_range': [0.3, 1.5],
                        'median_len': 7,
+                       'ch_cutoff': 1e-3,
                        'ch_trigger': 0.5},
               'lunar': {'filter_range': [0.5, 0.9],
-                        'median_len': 17,
-                        'ch_trigger': 0.49}
+                        'median_len': 21,
+                        'ch_cutoff': 1.4e-3,
+                        'ch_trigger': 0.46}
               }
 
 OUTPUT_FILES_ROOT = './output_files/'
@@ -73,11 +75,12 @@ class Model:
         self.median_len = 21
         self.ch_samps = None
         self.ch_times = None
+        self.ch_cutoff = 0.1
         self.ch_trigger = 0.5
         self.filter_range = [0.2, 1]
         # OUTPUT VALUES
         self.arrival_times = []
-        self.results_dir = ''
+        self.img_dir = ''
 
     @staticmethod
     def get_arrivals_from_catalog():
@@ -235,12 +238,15 @@ class Model:
 
     def calculate_characteristic(self):
         """Get the characteristic function, which will be used to deduce sismic events programmatically"""
+        med = np.median(self.scm)
         epsilon = 1e-3  # to avoid division by 0
-        self.ch_samps = (self.scm + epsilon) / (np.median(self.scm) + epsilon)
+        self.ch_samps = (self.scm + epsilon) / (med + epsilon)
+        self.ch_times = np.linspace(self.times[0], self.times[-1], len(self.scm))
+        self.ch_samps = (self.ch_samps + epsilon) / (med + epsilon)
         # self.ch_samps = self.sta_lta(self.ch_samps, int(self.sta_len * freq), int(self.lta_len * freq))
         # self.ch_samps = classic_sta_lta(self.ch_samps, int(self.sta_len * freq), int(self.lta_len * freq))
+        self.ch_samps = lowpass_filter(self.ch_samps, self.ch_cutoff, 1/(self.ch_times[1] - self.ch_times[0]))
         self.ch_samps = self.normalize(self.ch_samps)
-        self.ch_times = np.linspace(self.times[0], self.times[-1], len(self.scm))
 
     @staticmethod
     def sta_lta(data, nsta, nlta, demean=False):
@@ -290,13 +296,13 @@ class Model:
     def save_image(self, comment=''):
         """Save the current plots"""
         if self._fig:
-            self.results_dir = f'med{self.median_len}_fil{self.filter_range}_trig{self.ch_trigger}/'
-            out_dir = OUTPUT_FILES_ROOT + RELATIVE_ROOT + self.results_dir
+            self.img_dir = f'med{self.median_len}_fil{self.filter_range}_trig{self.ch_trigger}_chcut{self.ch_cutoff}/'
+            out_dir = OUTPUT_FILES_ROOT + RELATIVE_ROOT + self.img_dir
             out_name = self.fname + comment + '.png'
             image_path = out_dir + out_name
             print(f'Saving image {image_path}')
-            if not os.path.exists(OUTPUT_FILES_ROOT + RELATIVE_ROOT + self.results_dir):
-                os.makedirs(OUTPUT_FILES_ROOT + RELATIVE_ROOT + self.results_dir)
+            if not os.path.exists(OUTPUT_FILES_ROOT + RELATIVE_ROOT + self.img_dir):
+                os.makedirs(OUTPUT_FILES_ROOT + RELATIVE_ROOT + self.img_dir)
             plt.savefig(image_path)
             plt.close(self._fig)
             self._fig = None
@@ -308,6 +314,7 @@ if __name__ == '__main__':
     model.filter_range = MOD_PARAMS[PLANET]['filter_range']
     model.median_len = MOD_PARAMS[PLANET]['median_len']
     model.ch_trigger = MOD_PARAMS[PLANET]['ch_trigger']
+    model.ch_cutoff = MOD_PARAMS[PLANET]['ch_cutoff']
     # LIST OF FILENAMES - ARRIVAL FOR THE CATALOG
     fnames = []
     ar_times = []
@@ -328,6 +335,6 @@ if __name__ == '__main__':
     detect_df = pd.DataFrame(data={'filename': fnames,
                                    'time_rel(sec)': ar_times})
     detect_df.head()
-    cat_path = OUTPUT_FILES_ROOT + RELATIVE_ROOT + model.results_dir + f'{PLANET}_catalog.csv'
+    cat_path = OUTPUT_FILES_ROOT + RELATIVE_ROOT + model.img_dir + f'{PLANET}_catalog.csv'
     print(f'Saving catalog to {cat_path}')
     detect_df.to_csv(cat_path, index=False)
